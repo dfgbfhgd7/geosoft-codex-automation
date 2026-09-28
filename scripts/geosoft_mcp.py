@@ -20,7 +20,7 @@ import time
 from typing import Any
 
 SERVER_NAME = "geosoft-automation"
-SERVER_VERSION = "0.1.0"
+SERVER_VERSION = "0.2.0"
 PROTOCOL_VERSION = "2024-11-05"
 GEOSOFT_EXTENSIONS = {
     ".gdb", ".grd", ".map", ".obs", ".gpf", ".gs", ".gx", ".gi",
@@ -61,6 +61,31 @@ def _route_for_version(version: str | None) -> str:
     return "detect_version_before_selecting_route"
 
 
+def _walk_registry(winreg: Any, hive: Any, key_name: str, max_depth: int = 4) -> list[tuple[str, dict[str, str]]]:
+    """Read string values from a bounded registry subtree."""
+    found: list[tuple[str, dict[str, str]]] = []
+
+    def visit(name: str, depth: int) -> None:
+        try:
+            with winreg.OpenKey(hive, name) as key:
+                sub_count, value_count, _ = winreg.QueryInfoKey(key)
+                values: dict[str, str] = {}
+                for index in range(value_count):
+                    value_name, value, _ = winreg.EnumValue(key, index)
+                    if isinstance(value, str):
+                        values[value_name or "(Default)"] = value
+                sub_names = [winreg.EnumKey(key, index) for index in range(sub_count)]
+        except OSError:
+            return
+        found.append((name, values))
+        if depth < max_depth:
+            for sub_name in sub_names:
+                visit(name + "\\" + sub_name, depth + 1)
+
+    visit(key_name, 0)
+    return found
+
+
 def _registry_candidates() -> list[dict[str, str]]:
     if os.name != "nt":
         return []
@@ -69,52 +94,169 @@ def _registry_candidates() -> list[dict[str, str]]:
     except ImportError:
         return []
     results: list[dict[str, str]] = []
-    roots = (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER)
+    roots = (
+        (winreg.HKEY_LOCAL_MACHINE, "HKEY_LOCAL_MACHINE"),
+        (winreg.HKEY_CURRENT_USER, "HKEY_CURRENT_USER"),
+    )
     keys = (
         r"SOFTWARE\Geosoft",
         r"SOFTWARE\WOW6432Node\Geosoft",
         r"SOFTWARE\Seequent",
         r"SOFTWARE\WOW6432Node\Seequent",
     )
-    for hive in roots:
+    seen: set[tuple[str, str, str]] = set()
+    for hive, hive_name in roots:
         for key_name in keys:
-            try:
-                with winreg.OpenKey(hive, key_name) as key:
-                    sub_count = winreg.QueryInfoKey(key)[0]
-                    names = [""] + [winreg.EnumKey(key, i) for i in range(sub_count)]
-            except OSError:
-                continue
-            for sub_name in names:
-                full_name = key_name if not sub_name else key_name + "\\" + sub_name
-                try:
-                    with winreg.OpenKey(hive, full_name) as sub_key:
-                        value_count = winreg.QueryInfoKey(sub_key)[1]
-                        values = {}
-                        for index in range(value_count):
-                            name, value, _ = winreg.EnumValue(sub_key, index)
-                            if isinstance(value, str):
-                                values[name or "(Default)"] = value
-                except OSError:
-                    continue
+            for full_name, values in _walk_registry(winreg, hive, key_name):
                 for name, value in values.items():
                     expanded = os.path.expandvars(value)
-                    if "path" in name.lower() or "dir" in name.lower() or Path(expanded).exists():
-                        results.append({"registry_key": full_name, "value_name": name, "value": expanded})
+                    value_name = name.lower()
+                    path_clue = (
+                        value_name in {"geosoft", "geosoft2", "geotemp", "geosoft_resourcefiles"}
+                        or any(token in value_name for token in ("path", "directory", "folder"))
+                    )
+                    try:
+                        exists = Path(expanded).exists()
+                    except OSError:
+                        exists = False
+                    if path_clue or exists:
+                        item_key = (hive_name, full_name, name)
+                        if item_key not in seen:
+                            seen.add(item_key)
+                            results.append({"hive": hive_name, "registry_key": full_name,
+                                            "value_name": name, "value": expanded})
     return results
+
+
+def _uninstall_records() -> list[dict[str, str | None]]:
+    if os.name != "nt":
+        return []
+    try:
+        import winreg
+    except ImportError:
+        return []
+    locations = (
+        (winreg.HKEY_LOCAL_MACHINE, "HKEY_LOCAL_MACHINE", r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_LOCAL_MACHINE, "HKEY_LOCAL_MACHINE", r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+        (winreg.HKEY_CURRENT_USER, "HKEY_CURRENT_USER", r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+    )
+    records: list[dict[str, str | None]] = []
+    seen: set[tuple[str | None, str | None, str | None]] = set()
+    for hive, hive_name, root_name in locations:
+        try:
+            with winreg.OpenKey(hive, root_name) as root:
+                sub_names = [winreg.EnumKey(root, index) for index in range(winreg.QueryInfoKey(root)[0])]
+        except OSError:
+            continue
+        for sub_name in sub_names:
+            full_name = root_name + "\\" + sub_name
+            try:
+                with winreg.OpenKey(hive, full_name) as key:
+                    values = {}
+                    for index in range(winreg.QueryInfoKey(key)[1]):
+                        name, value, _ = winreg.EnumValue(key, index)
+                        values[name] = value
+            except OSError:
+                continue
+            display_name = values.get("DisplayName")
+            publisher = values.get("Publisher")
+            identity = f"{display_name or ''} {publisher or ''}".lower()
+            if not any(token in identity for token in ("geosoft", "oasis montaj", "seequent")):
+                continue
+            record = {
+                "hive": hive_name,
+                "registry_key": full_name,
+                "display_name": str(display_name) if display_name else None,
+                "display_version": str(values.get("DisplayVersion")) if values.get("DisplayVersion") else None,
+                "install_location": os.path.expandvars(str(values.get("InstallLocation"))) if values.get("InstallLocation") else None,
+                "publisher": str(publisher) if publisher else None,
+            }
+            record_key = (record["display_name"], record["display_version"], record["install_location"])
+            if record_key not in seen:
+                seen.add(record_key)
+                records.append(record)
+    return records
+
+
+def _path_is_under(path: Path, root: Path) -> bool:
+    try:
+        common = os.path.normcase(os.path.commonpath((str(path), str(root))))
+        return common == os.path.normcase(str(root))
+    except (OSError, ValueError):
+        return False
+
+
+def _windows_version_strings(path: Path) -> dict[str, str | None]:
+    """Read ProductVersion and FileVersion from a Windows executable resource."""
+    if os.name != "nt":
+        return {"product_version": None, "file_version": None}
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        version = ctypes.windll.version
+        size = version.GetFileVersionInfoSizeW(str(path), None)
+        if not size:
+            return {"product_version": None, "file_version": None}
+        buffer = ctypes.create_string_buffer(size)
+        if not version.GetFileVersionInfoW(str(path), 0, size, buffer):
+            return {"product_version": None, "file_version": None}
+
+        translations_ptr = ctypes.c_void_p()
+        translations_len = wintypes.UINT()
+        translations: list[tuple[int, int]] = []
+        if version.VerQueryValueW(buffer, r"\VarFileInfo\Translation",
+                                  ctypes.byref(translations_ptr), ctypes.byref(translations_len)):
+            count = translations_len.value // 4
+            raw = ctypes.cast(translations_ptr, ctypes.POINTER(wintypes.WORD))
+            translations = [(raw[index * 2], raw[index * 2 + 1]) for index in range(count)]
+        translations.extend([(0x0409, 0x04B0), (0x0409, 0x04E4)])
+
+        result: dict[str, str | None] = {"product_version": None, "file_version": None}
+        for field, output_name in (("ProductVersion", "product_version"), ("FileVersion", "file_version")):
+            for language, codepage in translations:
+                value_ptr = ctypes.c_void_p()
+                value_len = wintypes.UINT()
+                query = f"\\StringFileInfo\\{language:04x}{codepage:04x}\\{field}"
+                if version.VerQueryValueW(buffer, query, ctypes.byref(value_ptr), ctypes.byref(value_len)):
+                    value = ctypes.wstring_at(value_ptr, value_len.value).rstrip("\x00").strip()
+                    if value:
+                        result[output_name] = value
+                        break
+        return result
+    except (AttributeError, OSError, ValueError):
+        return {"product_version": None, "file_version": None}
 
 
 def detect_geosoft_installation(search_paths: list[str] | None = None) -> dict[str, Any]:
     registry = _registry_candidates()
-    candidates: set[Path] = set()
+    uninstall = _uninstall_records()
+    candidates: dict[str, dict[str, Any]] = {}
+
+    def add_candidate(value: str | Path, source: str) -> None:
+        try:
+            path = Path(os.path.expandvars(str(value))).expanduser()
+            normalized = str(path.resolve()).lower() if path.exists() else str(path.absolute()).lower()
+        except OSError:
+            return
+        entry = candidates.setdefault(normalized, {"path": path, "sources": []})
+        if source not in entry["sources"]:
+            entry["sources"].append(source)
+
     for name in ("GEOSOFT", "GXDIR", "GEOSOFT_BIN"):
         value = os.environ.get(name)
         if value:
-            candidates.add(Path(os.path.expandvars(value)))
+            add_candidate(value, f"environment:{name}")
     for item in registry:
         value = Path(item["value"])
-        candidates.add(value.parent if value.is_file() else value)
+        add_candidate(value.parent if value.is_file() else value,
+                      f"registry:{item['hive']}\\{item['registry_key']}:{item['value_name']}")
+    for item in uninstall:
+        if item["install_location"]:
+            add_candidate(item["install_location"], f"uninstall:{item['registry_key']}")
     if search_paths:
-        candidates.update(Path(os.path.expandvars(item)) for item in search_paths)
+        for item in search_paths:
+            add_candidate(item, "explicit_search_path")
     if os.name == "nt":
         for base_name in ("ProgramFiles", "ProgramFiles(x86)"):
             base = os.environ.get(base_name)
@@ -122,14 +264,15 @@ def detect_geosoft_installation(search_paths: list[str] | None = None) -> dict[s
                 for suffix in ("Geosoft", "Seequent"):
                     root = Path(base) / suffix
                     if root.exists():
-                        candidates.add(root)
+                        add_candidate(root, f"standard_directory:{base_name}")
     located = shutil.which("OMS.EXE") or shutil.which("oms.exe")
     if located:
-        candidates.add(Path(located).parent)
+        add_candidate(Path(located).parent, "PATH")
 
     executables: list[dict[str, Any]] = []
     seen: set[str] = set()
-    for root in sorted(candidates, key=lambda p: str(p).lower()):
+    for candidate in sorted(candidates.values(), key=lambda item: str(item["path"]).lower()):
+        root = candidate["path"]
         if not root.exists():
             continue
         probes = [root / "OMS.EXE", root / "bin" / "OMS.EXE"]
@@ -149,15 +292,35 @@ def detect_geosoft_installation(search_paths: list[str] | None = None) -> dict[s
             if not resolved.is_file() or key in seen:
                 continue
             seen.add(key)
-            version_match = re.search(r"(?<!\d)(\d+(?:\.\d+){1,3})(?!\d)", str(resolved))
+            resource_versions = _windows_version_strings(resolved)
+            matched_uninstall = None
+            for record in uninstall:
+                install_location = record.get("install_location")
+                if install_location and _path_is_under(resolved, Path(install_location).resolve()):
+                    matched_uninstall = record
+                    break
+            item_version = matched_uninstall.get("display_version") if matched_uninstall else None
+            version_source = "uninstall_registry" if item_version else None
+            if not item_version and resource_versions["product_version"]:
+                product_match = re.search(r"(?<!\d)(\d+(?:\.\d+){1,3})(?!\d)", resource_versions["product_version"])
+                item_version = product_match.group(1) if product_match else None
+                version_source = "oms_product_version" if item_version else None
+            if not item_version:
+                path_match = re.search(r"(?<!\d)(\d+(?:\.\d+){1,3})(?!\d)", str(resolved))
+                item_version = path_match.group(1) if path_match else None
+                version_source = "path_hint" if item_version else None
             executables.append({
                 "oms_exe": str(resolved),
-                "version_hint": version_match.group(1) if version_match else None,
+                "install_root": str(root.resolve()),
+                "detected_version": item_version,
+                "version_source": version_source,
+                **resource_versions,
+                "discovery_sources": candidate["sources"],
                 "size": resolved.stat().st_size,
                 "modified_ns": resolved.stat().st_mtime_ns,
             })
 
-    versions = [item["version_hint"] for item in executables if item["version_hint"]]
+    versions = [item["detected_version"] for item in executables if item["detected_version"]]
     detected_version = versions[0] if len(set(versions)) == 1 else None
     return {
         "host_windows": os.name == "nt",
@@ -167,8 +330,10 @@ def detect_geosoft_installation(search_paths: list[str] | None = None) -> dict[s
         "recommended_route": _route_for_version(detected_version),
         "installations": executables,
         "registry_path_hints": registry,
+        "uninstall_records": uninstall,
         "notes": [
-            "Version hints derived from paths are not authoritative; verify against Oasis About or file properties.",
+            "Uninstall DisplayVersion and OMS product-version resources are stronger evidence than path-name hints.",
+            "Verify the version against Oasis About before executing a production script.",
             "Do not install current gxpy for Oasis montaj 8.4.1.",
         ],
     }
@@ -454,6 +619,7 @@ def self_test() -> dict[str, Any]:
         "legacy_route_is_oms": _route_for_version("8.4.1") == "oms",
         "modern_route_probes_gxpy": _route_for_version("9.1") == "probe_gxpy_then_oms_fallback",
         "unknown_route_detects_first": _route_for_version(None) == "detect_version_before_selecting_route",
+        "full_legacy_build_routes_to_oms": _route_for_version("8.4.1.1156") == "oms",
     }
     return {"server": SERVER_NAME, "version": SERVER_VERSION, "host_windows": os.name == "nt",
             "python": platform.python_version(), "checks": checks, "ok": all(checks.values())}
@@ -465,13 +631,15 @@ def main() -> int:
     group.add_argument("--serve", action="store_true", help="run the MCP stdio server")
     group.add_argument("--self-test", action="store_true", help="run dependency-free checks")
     group.add_argument("--detect", action="store_true", help="print installation and gxpy detection JSON")
+    parser.add_argument("--search-path", action="append", default=[],
+                        help="additional installation root to inspect; may be repeated")
     args = parser.parse_args()
     if args.self_test:
         result = self_test()
         print(json.dumps(result, indent=2))
         return 0 if result["ok"] else 1
     if args.detect:
-        detected = detect_geosoft_installation()
+        detected = detect_geosoft_installation(args.search_path or None)
         detected["gxpy_probe"] = probe_gxpy(detected.get("detected_version"))
         print(json.dumps(detected, indent=2, ensure_ascii=False))
         return 0

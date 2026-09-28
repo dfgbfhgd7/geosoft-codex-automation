@@ -29,6 +29,12 @@ python .\scripts\geosoft_mcp.py --detect
 python .\scripts\geosoft_mcp.py --serve
 ```
 
+Legacy installations may live outside `Program Files`. The detector checks nested Geosoft/Seequent registry keys and Windows uninstall records. An installation root can also be supplied explicitly:
+
+```powershell
+python .\scripts\geosoft_mcp.py --detect --search-path D:\geosoft
+```
+
 The server uses JSON-RPC over stdio and has no required third-party Python dependency. Point the MCP client command to the absolute path of the selected Python executable and pass the absolute script path followed by `--serve`.
 
 Example MCP configuration:

@@ -11,6 +11,8 @@ For 8.4.1, prefer:
 - plain, documented interchange files;
 - independent Python processing that does not open proprietary files directly.
 
+Legacy 32-bit registration commonly appears below `HKLM\SOFTWARE\WOW6432Node\Geosoft\Desktop Applications\Environment`; the install root may also be present in the 32-bit Windows uninstall records. A missing `OMS.EXE` on `PATH` therefore does not show that Oasis is absent.
+
 Only use a Python package with 8.4.1 when it is already supplied by the vendor for that exact installation and the probe succeeds in the same interpreter and licence context.
 
 ## Oasis 9.1 and later

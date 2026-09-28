@@ -14,6 +14,8 @@ Use the local `geosoft-automation` MCP server for environment discovery and cont
 3. For Oasis montaj 8.4.1, do not install current gxpy. Use `.gs` scripts, `OMS.EXE`, ordinary files, and standalone Python unless the installed vendor distribution already supplies a package explicitly matched to 8.4.1.
 4. Consider gxpy only for Oasis 9.1 or later after the probe succeeds in the exact Python environment that will run the task.
 
+If automatic detection returns no installation, do not infer that Oasis is absent. Inspect legacy Geosoft registry `Environment` subkeys and Windows uninstall metadata, then retry with an explicit installation root. The CLI form is `--detect --search-path D:\path\to\geosoft`.
+
 Read [references/compatibility.md](references/compatibility.md) when deciding between gxpy and OMS or diagnosing an installation.
 
 ## Inspect before changing
