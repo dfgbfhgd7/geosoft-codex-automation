@@ -1,0 +1,10 @@
+interface:
+  display_name: "Geosoft Automation"
+  short_description: "Inspect and safely automate Oasis montaj projects"
+  icon_small: "../assets/icon.svg"
+  icon_large: "../assets/icon.svg"
+  brand_color: "#0B6E75"
+  default_prompt: "Use $geosoft-automation to detect my Oasis montaj installation and choose a safe automation route."
+
+policy:
+  allow_implicit_invocation: true

@@ -1,0 +1,2 @@
+# The MCP server uses only the Python standard library.
+# Do not add current geosoft/gxpy here: it is incompatible with the 8.4.1 route.

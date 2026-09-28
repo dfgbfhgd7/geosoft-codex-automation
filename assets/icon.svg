@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Geosoft automation">
+  <rect width="128" height="128" rx="24" fill="#0B6E75"/>
+  <path d="M20 84 43 39l20 31 18-42 27 56" fill="none" stroke="#E8F5F2" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="64" cy="92" r="10" fill="#F6B73C"/>
+</svg>
