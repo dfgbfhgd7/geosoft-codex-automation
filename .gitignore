@@ -18,6 +18,7 @@ data/
 raw-data/
 原始数据/
 瓦吉里塔格原始数据/
+Geosoft工作成果/
 
 # Do not stage a separate checkout copied inside this workspace.
 geosoft-codex-automation/
