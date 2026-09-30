@@ -1,6 +1,6 @@
 ---
 name: geosoft-automation
-description: Inspect and automate Geosoft Oasis montaj projects safely, including installation detection, gxpy compatibility checks, file inventory, and confirmed OMS.EXE script runs. Use for Oasis montaj or Geosoft project automation; preserve original geophysical data and treat 8.4.1 as an OMS-based legacy environment.
+description: Inspect and automate Geosoft Oasis montaj and aeromagnetic workflows safely, including installation detection, project inventory, dataset-specific survey-line review, and confirmed OMS.EXE script runs. Use for reusable Geosoft or airborne magnetic processing across new projects; preserve originals and treat 8.4.1 as an OMS-based legacy environment.
 ---
 
 # Geosoft Automation
@@ -23,6 +23,16 @@ Read [references/compatibility.md](references/compatibility.md) when deciding be
 Use `scan_geosoft_files` to inventory relevant files and capture sizes, timestamps, and checksums. Use `inspect_gdb_with_gxpy` only when compatibility has been established. Never claim a GDB was inspected if gxpy was unavailable or initialization failed.
 
 Keep original survey, base-station, GDB, GRD, MAP, OBS, inversion, and derived scientific products unchanged. Work from explicit copies and place all generated material in a new output directory. Preserve units, coordinate reference information, dummy values, channel names, line structure, and processing parameters in any interchange format.
+
+## Generalize to each new survey
+
+Do not reuse paths, sortie numbers, line lengths, headings, units, CRS, time offsets, dummy values, or file-name conventions from an earlier project. Inventory the new input, inspect headers and representative rows, and establish an explicit import profile before transforming data. Stop for unresolved units, coordinate systems, or clock interpretation.
+
+For candidate-line review, call `auto_review_survey_lines` without an output directory first. The tool recomputes the dominant traverse direction and length baseline from the supplied table. Use `assisted` by default: accept high-confidence ordinary lines and leave conflicts, short lines, ambiguous headings, and disconnected controls as `待审核`. Supply an intersection table when available so isolated controls are detected.
+
+Use `strict` when every line must remain pending. Use `unattended` only when the user explicitly chooses automatic decisions and the returned summary has no unresolved rows. Treat semantic keywords as configurable hints, never as the only scientific evidence. Flag magnetic anomalies for review; do not delete or alter values merely because their amplitude is unusual.
+
+Read [references/aeromagnetic-review.md](references/aeromagnetic-review.md) when adapting the workflow to a new input format or configuring automatic review.
 
 ## Run OMS only after review
 

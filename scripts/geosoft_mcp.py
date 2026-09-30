@@ -19,8 +19,10 @@ import sys
 import time
 from typing import Any
 
+from aeromag_auto_review import auto_review_survey_lines, self_test as auto_review_self_test
+
 SERVER_NAME = "geosoft-automation"
-SERVER_VERSION = "0.2.0"
+SERVER_VERSION = "0.3.0"
 PROTOCOL_VERSION = "2024-11-05"
 GEOSOFT_EXTENSIONS = {
     ".gdb", ".grd", ".map", ".obs", ".gpf", ".gs", ".gx", ".gi",
@@ -553,6 +555,22 @@ TOOLS = [
      "inputSchema": {"type": "object", "required": ["root"], "properties": {"root": {"type": "string"}, "recursive": {"type": "boolean", "default": True}, "include_checksums": {"type": "boolean", "default": True}, "max_files": {"type": "integer", "default": 5000}}}},
     {"name": "inspect_gdb_with_gxpy", "description": "Attempt read-only GDB metadata inspection only after gxpy compatibility is established.",
      "inputSchema": {"type": "object", "required": ["path"], "properties": {"path": {"type": "string"}, "oasis_version": {"type": "string"}}}},
+    {"name": "auto_review_survey_lines",
+     "description": "Infer a reusable survey-line review policy from each candidate table; preview by default or write a new audited review directory.",
+     "inputSchema": {
+         "type": "object", "required": ["candidate_table"], "properties": {
+             "candidate_table": {"type": "string"},
+             "output_dir": {"type": "string"},
+             "mode": {"type": "string", "enum": ["strict", "assisted", "unattended"], "default": "assisted"},
+             "intersection_table": {"type": "string"},
+             "heading_tolerance_deg": {"type": "number", "default": 12.0},
+             "confidence_threshold": {"type": "number", "default": 0.85},
+             "minimum_length_m": {"type": "number"},
+             "tie_keywords": {"type": "array", "items": {"type": "string"}},
+             "calibration_keywords": {"type": "array", "items": {"type": "string"}},
+             "column_map": {"type": "object", "additionalProperties": {"type": "string"}},
+         },
+     }},
     {"name": "plan_oms_command", "description": "Build and checksum an OMS.EXE command without running it.",
      "inputSchema": {"type": "object", "required": ["oms_exe", "script", "output_dir"], "properties": {"oms_exe": {"type": "string"}, "script": {"type": "string"}, "output_dir": {"type": "string"}, "arguments": {"type": "array", "items": {"type": "string"}}, "working_dir": {"type": "string"}, "timeout_seconds": {"type": "integer", "default": 3600}}}},
     {"name": "run_oms_script", "description": "Run one previously planned OMS command after explicit confirmation, with audit capture.",
@@ -564,6 +582,7 @@ FUNCTIONS = {
     "probe_gxpy": probe_gxpy,
     "scan_geosoft_files": scan_geosoft_files,
     "inspect_gdb_with_gxpy": inspect_gdb_with_gxpy,
+    "auto_review_survey_lines": auto_review_survey_lines,
     "plan_oms_command": plan_oms_command,
     "run_oms_script": run_oms_script,
 }
@@ -614,12 +633,14 @@ def serve() -> None:
 
 
 def self_test() -> dict[str, Any]:
+    review_test = auto_review_self_test()
     checks = {
-        "six_tools_registered": len(TOOLS) == 6 and set(FUNCTIONS) == {tool["name"] for tool in TOOLS},
+        "seven_tools_registered": len(TOOLS) == 7 and set(FUNCTIONS) == {tool["name"] for tool in TOOLS},
         "legacy_route_is_oms": _route_for_version("8.4.1") == "oms",
         "modern_route_probes_gxpy": _route_for_version("9.1") == "probe_gxpy_then_oms_fallback",
         "unknown_route_detects_first": _route_for_version(None) == "detect_version_before_selecting_route",
         "full_legacy_build_routes_to_oms": _route_for_version("8.4.1.1156") == "oms",
+        "generic_auto_review_passes": bool(review_test["ok"]),
     }
     return {"server": SERVER_NAME, "version": SERVER_VERSION, "host_windows": os.name == "nt",
             "python": platform.python_version(), "checks": checks, "ok": all(checks.values())}
